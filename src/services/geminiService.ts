@@ -50,14 +50,19 @@ const QUOTA_COOLDOWN = 60000; // 1 minute
 
 export async function getHospitalsNearMe(lat: number, lng: number) {
   if (isSearchQuotaExhausted) {
-    return HOSPITAL_DATABASE.slice(0, 3);
+    return HOSPITAL_DATABASE.slice(0, 5);
   }
 
-  const prompt = `أنا حالياً في الموقع الجغرافي ذو الإحداثيات (خط العرض: ${lat}، خط الطول: ${lng}). 
-  ابحث لي عن أقرب 5 مستشفيات حقيقية وموثوقة في مصر تكون مجهزة لاستقبال ذوي الإعاقة (المكفوفين أو الصم والبكم).
-  يجب أن تكون النتائج مرتبة حسب الأقرب لموقعي الحالي.
-  أريد النتيجة بتنسيق JSON كقائمة من الكائنات تحتوي على: name, address, phone, services (array of strings).
-  تأكد من أن العناوين دقيقة وأرقام الهواتف صحيحة وتعمل.`;
+  const prompt = `أنا أبحث عن مستشفيات مجهزة لذوي الهمم (المكفوفين أو الصم والبكم) في مصر.
+  موقعي الحالي الدقيق هو: خط عرض ${lat}، خط طول ${lng}.
+  
+  المطلوب:
+  1. استخدم أداة Google Maps للبحث حصرياً حول هذه الإحداثيات (خط عرض ${lat}، خط طول ${lng}) للعثور على أقرب 5 مستشفيات حقيقية.
+  2. تأكد أن المستشفيات لديها خدمات مخصصة لذوي الإعاقة (مثل مترجمي لغة إشارة، مسارات للمكفوفين، أو وحدات تخاطب وسمعيات).
+  3. رتب النتائج حسب المسافة الأقرب لموقعي الحالي (الأقرب فالأقرب).
+  4. أرجع النتيجة بتنسيق JSON فقط كقائمة من الكائنات: [{"name": "...", "address": "...", "phone": "...", "services": ["...", "..."]}].
+  
+  ملاحظة: لا تقترح مستشفيات بعيدة في محافظات أخرى، التزم بالنطاق الجغرافي القريب من الإحداثيات المعطاة.`;
   
   try {
     const ai = getAI();
@@ -65,6 +70,9 @@ export async function getHospitalsNearMe(lat: number, lng: number) {
       model: "gemini-2.5-flash",
       contents: prompt,
       config: {
+        systemInstruction: `أنت مساعد طبي خبير في مصر. مهمتك هي العثور على أقرب مستشفيات للمستخدم بناءً على إحداثياته الجغرافية (${lat}, ${lng}). 
+        يجب أن تستخدم أداة الخرائط للتحقق من المسافة الحقيقية. 
+        إذا كان المستخدم في محافظة معينة (مثل سوهاج أو أسيوط)، لا تعرض له نتائج في القاهرة.`,
         tools: [{ googleMaps: {} }, { googleSearch: {} }],
         toolConfig: {
           retrievalConfig: {
@@ -76,7 +84,21 @@ export async function getHospitalsNearMe(lat: number, lng: number) {
         }
       }
     });
-    return robustParseJSON(response.text || "[]");
+    
+    const results = robustParseJSON(response.text || "[]");
+    if (results && results.length > 0) {
+      return results;
+    }
+    
+    // If model returned empty or invalid, try to find something relevant in local DB
+    // We'll try to get the governorate first for a better fallback
+    const gov = await getGovernorateFromCoords(lat, lng);
+    if (gov) {
+      const localResults = HOSPITAL_DATABASE.filter(h => h.governorate === gov).slice(0, 5);
+      if (localResults.length > 0) return localResults;
+    }
+    
+    return HOSPITAL_DATABASE.slice(0, 5);
   } catch (e: any) {
     const errorStr = JSON.stringify(e);
     const isQuotaError = errorStr.includes("429") || errorStr.includes("RESOURCE_EXHAUSTED");
@@ -84,11 +106,51 @@ export async function getHospitalsNearMe(lat: number, lng: number) {
     if (isQuotaError) {
       isSearchQuotaExhausted = true;
       setTimeout(() => { isSearchQuotaExhausted = false; }, QUOTA_COOLDOWN);
-      return HOSPITAL_DATABASE.slice(0, 3);
     } else {
       console.error("Location Search Error:", e);
     }
-    return HOSPITAL_DATABASE.slice(0, 3); // Fallback to local data on error
+    
+    // Fallback to governorate-based local search
+    try {
+      const gov = await getGovernorateFromCoords(lat, lng);
+      if (gov) {
+        const localResults = HOSPITAL_DATABASE.filter(h => h.governorate === gov).slice(0, 5);
+        if (localResults.length > 0) return localResults;
+      }
+    } catch (innerE) {}
+    
+    return HOSPITAL_DATABASE.slice(0, 5);
+  }
+}
+
+export async function getGovernorateFromCoords(lat: number, lng: number): Promise<string | null> {
+  const prompt = `أنا في الإحداثيات التالية: خط عرض ${lat}، خط طول ${lng}. ما هي المحافظة المصرية التي أتواجد فيها الآن؟ 
+  أجب باسم المحافظة فقط (مثلاً: القاهرة، الجيزة، الإسكندرية، سوهاج، المنيا...).`;
+  
+  try {
+    const ai = getAI();
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: prompt,
+      config: {
+        tools: [{ googleMaps: {} }],
+        toolConfig: {
+          retrievalConfig: {
+            latLng: { latitude: lat, longitude: lng }
+          }
+        }
+      }
+    });
+    
+    const text = response.text?.trim() || "";
+    // Clean up the response to get just the governorate name
+    for (const gov of ["القاهرة", "الجيزة", "الإسكندرية", "الدقهلية", "البحر الأحمر", "البحيرة", "الفيوم", "الغربية", "الإسماعيلية", "المنوفية", "المنيا", "القليوبية", "الوادي الجديد", "السويس", "الشرقية", "دمياط", "بورسعيد", "جنوب سيناء", "كفر الشيخ", "مطروح", "الأقصر", "قنا", "شمال سيناء", "سوهاج", "بني سويف", "أسيوط", "أسوان"]) {
+      if (text.includes(gov)) return gov;
+    }
+    return null;
+  } catch (e) {
+    console.error("Reverse Geocoding Error:", e);
+    return null;
   }
 }
 
