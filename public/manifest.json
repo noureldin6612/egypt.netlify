@@ -1,0 +1,22 @@
+{
+  "short_name": "رعاية",
+  "name": "رعاية - خدمات ذوي الإعاقة",
+  "icons": [
+    {
+      "src": "https://picsum.photos/seed/health/192/192",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://picsum.photos/seed/health/512/512",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#ffffff",
+  "display": "standalone",
+  "theme_color": "#10b981",
+  "description": "تطبيق لمساعدة ذوي الإعاقة في العثور على المستشفيات المجهزة في مصر"
+}
