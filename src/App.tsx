@@ -14,10 +14,18 @@ import {
   Menu,
   X
 } from 'lucide-react';
-import { getHospitalsNearMe, getGovernorateFromCoords } from './services/geminiService';
-import { HOSPITAL_DATABASE, Hospital } from './data/hospitals';
+import { getHospitalsNearMe } from './services/geminiService';
+import { HOSPITAL_DATABASE } from './data/hospitals';
 
 type DisabilityType = 'blind' | 'deaf' | null;
+
+interface Hospital {
+  name: string;
+  address: string;
+  phone: string;
+  services: string[];
+  governorate: string;
+}
 
 const GOVERNORATES = [
   "القاهرة", "الجيزة", "الإسكندرية", "الدقهلية", "البحر الأحمر", 
@@ -120,30 +128,16 @@ export default function App() {
         setShowLocationPrompt(false);
         const { latitude, longitude } = position.coords;
         
-        let detectedGov = "";
-        try {
-          detectedGov = await getGovernorateFromCoords(latitude, longitude) || "";
-        } catch (e) {
-          console.error("Failed to get gov", e);
-        }
-
         if (isOffline) {
           // If offline, we can't search dynamically, so we show some local data
-          const localResults = detectedGov 
-            ? HOSPITAL_DATABASE.filter(h => h.governorate === detectedGov).slice(0, 5)
-            : HOSPITAL_DATABASE.slice(0, 5);
-          setHospitals(localResults.length > 0 ? localResults : HOSPITAL_DATABASE.slice(0, 5));
-          setGovernorate(detectedGov ? `بالقرب مني (${detectedGov})` : "بالقرب مني (أوفلاين)");
+          setHospitals(HOSPITAL_DATABASE.slice(0, 5));
+          setGovernorate("بالقرب مني (أوفلاين)");
           setShowOfflineDb(true);
         } else {
           const rawResults = await getHospitalsNearMe(latitude, longitude);
-          // Only set governorate to "بالقرب مني" if the result doesn't have one
-          const results = rawResults.map((h: any) => ({ 
-            ...h, 
-            governorate: h.governorate || detectedGov || "بالقرب مني" 
-          }));
+          const results = rawResults.map((h: any) => ({ ...h, governorate: "بالقرب مني" }));
           setHospitals(results);
-          setGovernorate(detectedGov ? `بالقرب مني (${detectedGov})` : "بالقرب مني");
+          setGovernorate("بالقرب مني");
           setShowOfflineDb(false);
         }
         
